@@ -49,7 +49,6 @@ def apply_vorteza_theme():
                 text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
             }}
 
-            /* Karty VORTEZA */
             .vorteza-card {{
                 background-color: var(--v-panel);
                 padding: 25px;
@@ -60,7 +59,6 @@ def apply_vorteza_theme():
                 margin-bottom: 25px;
             }}
 
-            /* Stylizacja tabeli */
             .cost-table {{
                 width: 100%;
                 border-collapse: collapse;
@@ -80,7 +78,6 @@ def apply_vorteza_theme():
                 font-size: 0.9rem;
             }}
 
-            /* Przyciski */
             .stButton > button {{
                 background-color: rgba(0, 0, 0, 0.7);
                 color: var(--v-copper);
@@ -96,7 +93,6 @@ def apply_vorteza_theme():
                 color: black;
             }}
 
-            /* Inputy */
             div[data-baseweb="select"] > div, input {{
                 background-color: rgba(15, 15, 15, 0.9) !important;
                 color: white !important;
@@ -128,17 +124,28 @@ with col_title:
     st.markdown("<p style='letter-spacing:3px; color:#666;'>CENTRALNY SPIS SUBSKRYPCJI I DOSTĘPÓW</p>", unsafe_allow_html=True)
 
 # =========================================================
-# 3. POŁĄCZENIE I DANE
+# 3. POŁĄCZENIE I DANE (POPRAWKA BŁĘDU KEYERROR)
 # =========================================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     df = conn.read(ttl=0)
+    # 1. Usuwamy spacje z nazw kolumn
     df.columns = [c.strip() for c in df.columns]
+    
+    # 2. Inteligentne mapowanie kolumny statusu
+    if 'status_aktywn_y' not in df.columns and 'status_aktywny' in df.columns:
+        df.rename(columns={'status_aktywny': 'status_aktywn_y'}, inplace=True)
+    
+    # Dodanie pomocniczego ID do selectboxów
     df['display_name'] = df['firma_id'].astype(str) + " | " + df['uzytkownik_id'].astype(str)
     return df
 
-data = load_data()
+try:
+    data = load_data()
+except Exception as e:
+    st.error(f"KRYTYCZNY BŁĄD BAZY: {e}")
+    st.stop()
 
 # =========================================================
 # 4. NAWIGACJA
@@ -148,17 +155,23 @@ menu = ["📊 DASHBOARD", "🔧 KONFIGURACJA KLIENTA", "➕ NOWA REJESTRACJA"]
 choice = st.sidebar.selectbox("NAWIGACJA", menu)
 
 # =========================================================
-# 5. DASHBOARD (STYL VORTEZA)
+# 5. DASHBOARD
 # =========================================================
 if choice == "📊 DASHBOARD":
     st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
     st.subheader("STATUS EKONOMICZNY")
     
     today = datetime.now().date()
-    active_mask = data['status_aktywn_y'] == True
-    total_rev = data[active_mask]['kwota_subskrypcji'].sum()
-    active_count = data[active_mask].shape[0]
     
+    # Bezpieczne sprawdzanie statusu
+    if 'status_aktywn_y' in data.columns:
+        active_mask = data['status_aktywn_y'] == True
+        total_rev = data[active_mask]['kwota_subskrypcji'].sum()
+        active_count = data[active_mask].shape[0]
+    else:
+        total_rev, active_count = 0, 0
+        st.warning("Nie znaleziono kolumny statusu w arkuszu!")
+
     m1, m2, m3 = st.columns(3)
     m1.metric("PRZYCHÓD (M)", f"{total_rev:,.2f} PLN")
     m2.metric("AKTYWNE SYSTEMY", active_count)
@@ -168,7 +181,6 @@ if choice == "📊 DASHBOARD":
     st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
     st.subheader("LISTA OPERACYJNA")
     
-    # Budowanie tabeli HTML dla lepszej kontroli stylu (zgodnie z vortezaflow)
     table_html = """
     <table class="cost-table">
         <tr>
@@ -176,12 +188,13 @@ if choice == "📊 DASHBOARD":
         </tr>
     """
     for _, row in data.iterrows():
-        status_txt = "✅ AKTYWNY" if row['status_aktywn_y'] else "❌ BLOKADA"
+        is_active = row.get('status_aktywn_y', False)
+        status_txt = "✅ AKTYWNY" if is_active else "❌ BLOKADA"
         row_style = ""
         try:
             end_dt = pd.to_datetime(row['data_konca']).date()
-            if end_dt < today and row['status_aktywn_y']:
-                row_style = 'style="color: #ff4b4b; font-weight:bold;"' # Podświetlenie wygasłych
+            if end_dt < today and is_active:
+                row_style = 'style="color: #ff4b4b; font-weight:bold;"'
         except: pass
         
         table_html += f"""
@@ -190,7 +203,7 @@ if choice == "📊 DASHBOARD":
             <td>{row['uzytkownik_id']}</td>
             <td>{status_txt}</td>
             <td>{row['data_konca']}</td>
-            <td>{row['kwota_subskrypcji']:.2f} PLN</td>
+            <td>{row.get('kwota_subskrypcji', 0):.2f} PLN</td>
         </tr>
         """
     table_html += "</table>"
@@ -212,12 +225,12 @@ elif choice == "🔧 KONFIGURACJA KLIENTA":
         c1, c2 = st.columns(2)
         with c1:
             n_pass = st.text_input("Klucz Dostępu (Hasło)", value=str(row['haslo']))
-            n_status = st.checkbox("Dostęp Aktywny", value=bool(row['status_aktywn_y']))
+            n_status = st.checkbox("Dostęp Aktywny", value=bool(row.get('status_aktywn_y', True)))
             n_app_id = st.text_input("Aplikacja ID", value=str(row['aplikacja_id']))
         with c2:
             n_end = st.text_input("Termin ważności (RRRR-MM-DD)", value=str(row['data_konca']))
-            n_price = st.number_input("Stawka Subskrypcji", value=float(row['kwota_subskrypcji']))
-            n_url = st.text_input("URL Systemu", value=str(row['url_aplikacji']))
+            n_price = st.number_input("Stawka Subskrypcji", value=float(row.get('kwota_subskrypcji', 0)))
+            n_url = st.text_input("URL Systemu", value=str(row.get('url_aplikacji', '')))
             
         if st.form_submit_button("ZAKTUALIZUJ RDZEŃ BAZY"):
             df_up = data.copy().drop(columns=['display_name'])
