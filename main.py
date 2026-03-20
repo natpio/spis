@@ -26,16 +26,13 @@ def apply_vorteza_theme():
                 font-family: 'Montserrat', sans-serif;
             }
 
-            /* Styl nagłówków */
             h1, h2, h3 {
                 color: var(--v-copper) !important;
                 font-weight: 700 !important;
                 text-transform: uppercase;
                 letter-spacing: 3px;
-                margin-bottom: 20px;
             }
 
-            /* Karty statystyk */
             .vorteza-card {
                 background: var(--v-panel);
                 padding: 25px;
@@ -45,24 +42,12 @@ def apply_vorteza_theme():
                 margin-bottom: 25px;
             }
 
-            /* Metryki */
             [data-testid="stMetricValue"] {
                 color: var(--v-copper) !important;
                 font-size: 1.8rem !important;
                 font-weight: 700 !important;
             }
-            [data-testid="stMetricLabel"] {
-                color: #888 !important;
-                text-transform: uppercase;
-            }
 
-            /* Sidebar */
-            [data-testid="stSidebar"] {
-                background-color: #050505 !important;
-                border-right: 1px solid #222;
-            }
-
-            /* Przyciski */
             .stButton > button {
                 background-color: transparent !important;
                 color: var(--v-copper) !important;
@@ -76,13 +61,6 @@ def apply_vorteza_theme():
             .stButton > button:hover {
                 background-color: var(--v-copper) !important;
                 color: black !important;
-                box-shadow: 0 0 15px var(--v-copper);
-            }
-            
-            /* Formularze */
-            div[data-baseweb="input"] {
-                background-color: #111 !important;
-                border: 1px solid #333 !important;
             }
         </style>
     """, unsafe_allow_html=True)
@@ -96,26 +74,29 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def get_live_data():
     df = conn.read(ttl=0)
-    # Czyszczenie i standaryzacja kolumn
     df.columns = [str(c).strip() for c in df.columns]
-    # Szukamy kolumny statusu
+    
+    # Mapowanie kolumny statusu
     status_col = next((c for c in df.columns if 'status' in c.lower() or 'aktyw' in c.lower()), 'status_aktywny')
     df.rename(columns={status_col: 'STATUS_CORE'}, inplace=True)
     
-    # Naprawa formatów
+    # Konwersja kwot
     df['kwota_subskrypcji'] = pd.to_numeric(df['kwota_subskrypcji'], errors='coerce').fillna(0)
+    
+    # Konwersja dat z obsługą pustych wartości (NaT)
     df['data_konca'] = pd.to_datetime(df['data_konca'], errors='coerce').dt.date
+    
     df['display_name'] = df['firma_id'].astype(str) + " // " + df['uzytkownik_id'].astype(str)
     return df
 
 try:
     data = get_live_data()
 except Exception as e:
-    st.error(f"KRYTYCZNY BŁĄD POŁĄCZENIA: {e}")
+    st.error(f"KRYTYCZNY BŁĄD BAZY: {e}")
     st.stop()
 
 # =========================================================
-# 3. LOGIKA RENDEROWANIA TABELI (AWESOME TABLE)
+# 3. LOGIKA RENDEROWANIA TABELI (POPRAWIONY BŁĄD TYPEERROR)
 # =========================================================
 def render_vorteza_table(df):
     today = datetime.now().date()
@@ -126,35 +107,42 @@ def render_vorteza_table(df):
         status_label = "AKTYWNY" if is_active else "BLOKADA"
         status_color = "#4CAF50" if is_active else "#F44336"
         
-        # Ostrzeżenie o terminie
+        # FIX: Sprawdzamy czy data_konca nie jest pusta (pd.notna) przed porównaniem
         row_bg = "transparent"
-        if row['data_konca'] and row['data_konca'] < today and is_active:
-            row_bg = "rgba(181, 136, 99, 0.1)"
+        expiry_val = row['data_konca']
+        
+        if pd.notna(expiry_val) and is_active:
+            if expiry_val < today:
+                row_bg = "rgba(244, 67, 54, 0.15)" # Czerwony alarm - wygasło
+            elif (expiry_val - today).days <= 7:
+                row_bg = "rgba(181, 136, 99, 0.1)" # Miedziany alert - kończy się za tydzień
+        
+        display_date = expiry_val if pd.notna(expiry_val) else "BRAK DATY"
         
         table_rows += f"""
         <tr style="background-color: {row_bg}; border-bottom: 1px solid #222;">
             <td style="padding: 15px; color: #fff; font-weight: bold;">{row['firma_id']}</td>
             <td style="padding: 15px; color: #AAA;">{row['uzytkownik_id']}</td>
             <td style="padding: 15px;">
-                <span style="color: {status_color}; font-size: 0.8rem; font-weight: bold; border: 1px solid {status_color}; padding: 3px 8px; border-radius: 3px;">
+                <span style="color: {status_color}; font-size: 0.75rem; font-weight: bold; border: 1px solid {status_color}; padding: 3px 8px; border-radius: 3px;">
                     {status_label}
                 </span>
             </td>
-            <td style="padding: 15px; color: #EEE;">{row['data_konca']}</td>
+            <td style="padding: 15px; color: #EEE;">{display_date}</td>
             <td style="padding: 15px; color: #B58863; font-weight: bold;">{row['kwota_subskrypcji']:.2f} PLN</td>
         </tr>
         """
 
     html_code = f"""
-    <div style="font-family: 'Montserrat', sans-serif; background-color: #0E0E0E; padding: 10px;">
+    <div style="font-family: 'Montserrat', sans-serif; background-color: #0E0E0E;">
         <table style="width: 100%; border-collapse: collapse; text-align: left;">
             <thead>
                 <tr style="border-bottom: 2px solid #B58863;">
-                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.8rem;">Firma</th>
-                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.8rem;">User</th>
-                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.8rem;">Status</th>
-                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.8rem;">Termin</th>
-                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.8rem;">Stawka</th>
+                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.75rem;">Firma</th>
+                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.75rem;">User</th>
+                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.75rem;">Status</th>
+                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.75rem;">Termin</th>
+                    <th style="padding: 15px; color: #B58863; text-transform: uppercase; font-size: 0.75rem;">Stawka</th>
                 </tr>
             </thead>
             <tbody>
@@ -163,17 +151,15 @@ def render_vorteza_table(df):
         </table>
     </div>
     """
-    # Renderowanie jako komponent - to eliminuje błąd surowego tekstu
-    components.html(html_code, height=600, scrolling=True)
+    components.html(html_code, height=500, scrolling=True)
 
 # =========================================================
-# 4. NAWIGACJA I MODUŁY
+# 4. MODUŁY SYSTEMU
 # =========================================================
-st.sidebar.markdown(f"<h2 style='text-align:center;'>VORTEZA</h2>", unsafe_allow_html=True)
-menu = ["📊 DASHBOARD", "⚙️ ZARZĄDZANIE", "➕ NOWA INSTANCJA"]
+st.sidebar.markdown("<h2 style='text-align:center; color:#B58863;'>VORTEZA</h2>", unsafe_allow_html=True)
+menu = ["📊 DASHBOARD", "⚙️ ZARZĄDZANIE", "➕ NOWY KLIENT"]
 choice = st.sidebar.selectbox("NAWIGACJA", menu)
 
-# --- DASHBOARD ---
 if choice == "📊 DASHBOARD":
     st.header("PANEL MONITORINGU")
     
@@ -190,29 +176,28 @@ if choice == "📊 DASHBOARD":
     st.subheader("LISTA OPERACYJNA")
     render_vorteza_table(data)
 
-# --- ZARZĄDZANIE ---
 elif choice == "⚙️ ZARZĄDZANIE":
-    st.header("KONFIGURACJA RDZENIA")
+    st.header("EDYCJA DOSTĘPÓW")
     st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
     
-    target = st.selectbox("Wybierz instancję do modyfikacji:", data['display_name'].tolist())
+    target = st.selectbox("Wybierz instancję:", data['display_name'].tolist())
     idx = data[data['display_name'] == target].index[0]
     row = data.loc[idx]
 
-    with st.form("update_vorteza"):
+    with st.form("update_form"):
         col1, col2 = st.columns(2)
         with col1:
-            u_pass = st.text_input("Hasło Dostępowe", value=str(row['haslo']))
+            u_pass = st.text_input("Hasło", value=str(row['haslo']))
             u_status = st.checkbox("Status Aktywny", value=bool(row['STATUS_CORE']))
-            u_app = st.text_input("Aplikacja ID", value=str(row.get('aplikacja_id', '')))
+            u_app = st.text_input("App ID", value=str(row.get('aplikacja_id', '')))
         with col2:
-            u_date = st.date_input("Termin Ważności", value=row['data_konca'])
-            u_price = st.number_input("Stawka Subskrypcji", value=float(row['kwota_subskrypcji']))
-            u_url = st.text_input("System URL", value=str(row.get('url_aplikacji', '')))
+            # Obsługa domyślnej daty w formularzu jeśli w bazie jest pusto
+            def_date = row['data_konca'] if pd.notna(row['data_konca']) else datetime.now().date()
+            u_date = st.date_input("Termin Ważności", value=def_date)
+            u_price = st.number_input("Stawka", value=float(row['kwota_subskrypcji']))
         
-        if st.form_submit_button("ZAPISZ ZMIANY W CHMURZE"):
+        if st.form_submit_button("ZAKTUALIZUJ BAZĘ"):
             df_up = data.copy().drop(columns=['display_name', 'STATUS_CORE'])
-            # Szukamy oryginalnej nazwy kolumny w arkuszu
             orig_col = next((c for c in df_up.columns if 'status' in c.lower() or 'aktyw' in c.lower()), 'status_aktywny')
             
             df_up.at[idx, 'haslo'] = u_pass
@@ -220,43 +205,31 @@ elif choice == "⚙️ ZARZĄDZANIE":
             df_up.at[idx, 'data_konca'] = str(u_date)
             df_up.at[idx, 'kwota_subskrypcji'] = u_price
             df_up.at[idx, 'aplikacja_id'] = u_app
-            df_up.at[idx, 'url_aplikacji'] = u_url
             
             conn.update(data=df_up)
-            st.success("ZSYNCHRONIZOWANO Z GOOGLE SHEETS")
+            st.success("ZSYNCHRONIZOWANO")
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-# --- NOWY KLIENT ---
-elif choice == "➕ NOWA INSTANCJA":
-    st.header("REJESTRACJA SYSTEMU")
+elif choice == "➕ NOWY KLIENT":
+    st.header("REJESTRACJA")
     st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
-    
-    with st.form("new_instance"):
-        cx1, cx2 = st.columns(2)
-        with cx1:
-            f_id = st.text_input("ID FIRMY")
-            u_id = st.text_input("ID UŻYTKOWNIKA")
-            h_id = st.text_input("HASŁO")
-        with cx2:
-            a_id = st.text_input("APLIKACJA ID")
-            d_id = st.date_input("DATA KOŃCA")
-            k_id = st.number_input("STAWKA (PLN)", value=250.0)
-            
-        if st.form_submit_button("DODAJ NOWĄ INSTANCJĘ"):
+    with st.form("new_client"):
+        f_id = st.text_input("ID FIRMY")
+        u_id = st.text_input("ID USERA")
+        h_id = st.text_input("HASŁO")
+        d_id = st.date_input("KONIEC SUBSKRYPCJI")
+        k_id = st.number_input("KWOTA", value=250.0)
+        
+        if st.form_submit_button("DODAJ DO SYSTEMU"):
             if f_id and u_id:
                 new_entry = {
                     "firma_id": f_id, "uzytkownik_id": u_id, "haslo": h_id,
-                    "aplikacja_id": a_id, "data_konca": str(d_id),
-                    "kwota_subskrypcji": k_id, "status_aktywny": True,
-                    "data_startu": datetime.now().strftime("%Y-%m-%d"),
-                    "url_aplikacji": ""
+                    "data_konca": str(d_id), "kwota_subskrypcji": k_id, 
+                    "status_aktywny": True, "data_startu": datetime.now().strftime("%Y-%m-%d")
                 }
-                # Połączenie i wysyłka
                 save_df = pd.concat([data.drop(columns=['display_name', 'STATUS_CORE']), pd.DataFrame([new_entry])], ignore_index=True)
                 conn.update(data=save_df)
-                st.success(f"SYSTEM DLA {f_id} ZOSTAŁ UTWORZONY")
+                st.success("DODANO POMYŚLNIE")
                 st.rerun()
-            else:
-                st.warning("Pola ID FIRMY i ID UŻYTKOWNIKA są wymagane.")
     st.markdown('</div>', unsafe_allow_html=True)
