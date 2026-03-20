@@ -6,12 +6,11 @@ import base64
 from PIL import Image
 
 # =========================================================
-# 1. KONFIGURACJA STRONY I STYLE (VORTEZA DESIGN)
+# 1. KONFIGURACJA I STYLIZACJA (VORTEZA MASTER)
 # =========================================================
 st.set_page_config(page_title="VORTEZA MASTER", layout="wide")
 
 def apply_vorteza_theme():
-    # Stylizacja interfejsu bez użycia tabel HTML w treści
     st.markdown("""
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;700&display=swap');
@@ -19,7 +18,7 @@ def apply_vorteza_theme():
             :root {
                 --v-copper: #B58863;
                 --v-dark: #0E0E0E;
-                --v-panel: rgba(25, 25, 25, 0.9);
+                --v-panel: rgba(25, 25, 25, 0.95);
             }
 
             .stApp {
@@ -30,25 +29,50 @@ def apply_vorteza_theme():
 
             .vorteza-card {
                 background-color: var(--v-panel);
-                padding: 20px;
-                border-radius: 4px;
-                border-left: 4px solid var(--v-copper);
-                margin-bottom: 20px;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+                padding: 25px;
+                border-radius: 5px;
+                border-left: 5px solid var(--v-copper);
+                margin-bottom: 30px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.5);
             }
 
             h1, h2, h3 {
                 color: var(--v-copper) !important;
                 text-transform: uppercase;
                 letter-spacing: 2px;
+                font-weight: 700 !important;
             }
 
-            /* Stylizacja przycisków */
+            /* STYLIZACJA TABELI - KLUCZ DO ROZWIĄZANIA */
+            .vorteza-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+                background-color: transparent;
+            }
+            .vorteza-table th {
+                color: var(--v-copper);
+                text-align: left;
+                padding: 15px;
+                border-bottom: 2px solid var(--v-copper);
+                text-transform: uppercase;
+                font-size: 0.85rem;
+            }
+            .vorteza-table td {
+                padding: 15px;
+                border-bottom: 1px solid #333;
+                font-size: 0.9rem;
+            }
+            .row-expired {
+                background-color: rgba(255, 0, 0, 0.1);
+                color: #ffbaba !important;
+            }
+
             .stButton > button {
                 background-color: transparent;
                 color: var(--v-copper);
                 border: 1px solid var(--v-copper);
-                width: 100%;
+                transition: 0.3s;
                 font-weight: bold;
             }
             .stButton > button:hover {
@@ -61,162 +85,128 @@ def apply_vorteza_theme():
 apply_vorteza_theme()
 
 # =========================================================
-# 2. LOGIKA DANYCH (GOOGLE SHEETS)
+# 2. POŁĄCZENIE I DANE
 # =========================================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def load_clean_data():
-    # Pobranie danych
+def get_data():
     df = conn.read(ttl=0)
+    # Czyszczenie nagłówków
+    df.columns = [str(c).strip() for c in df.columns]
     
-    # Czyszczenie nazw kolumn (usuwanie spacji, nowych linii, małe litery dla stabilności)
-    df.columns = [str(c).strip().lower() for c in df.columns]
-    
-    # Inteligentne mapowanie kolumny statusu
-    # Szukamy kolumny która zawiera 'status' lub 'aktyw'
-    status_col = None
-    for col in df.columns:
-        if 'status' in col or 'aktyw' in col:
-            status_col = col
-            break
-    
+    # Obsługa kolumny statusu
+    status_col = next((c for c in df.columns if 'status' in c.lower() or 'aktyw' in c.lower()), None)
     if status_col:
-        df.rename(columns={status_col: 'status_bool'}, inplace=True)
+        df.rename(columns={status_col: 'STATUS_INTERNAL'}, inplace=True)
     else:
-        df['status_bool'] = True # Fail-safe
+        df['STATUS_INTERNAL'] = True
         
-    # Tworzenie identyfikatora do list wyboru
     df['display_name'] = df['firma_id'].astype(str) + " | " + df['uzytkownik_id'].astype(str)
     return df
 
 try:
-    data = load_clean_data()
+    data = get_data()
 except Exception as e:
-    st.error(f"Błąd połączenia z bazą: {e}")
+    st.error(f"Błąd danych: {e}")
     st.stop()
 
 # =========================================================
-# 3. NAWIGACJA
+# 3. INTERFEJS
 # =========================================================
-st.sidebar.title("VORTEZA OPS")
-menu = ["📊 DASHBOARD", "🔧 ZARZĄDZANIE", "➕ NOWY KLIENT"]
-choice = st.sidebar.selectbox("MENU", menu)
+menu = ["📊 DASHBOARD", "🔧 KONFIGURACJA", "➕ NOWY KLIENT"]
+choice = st.sidebar.selectbox("NAWIGACJA", menu)
 
-# =========================================================
-# 4. DASHBOARD (ROZWIĄZANIE PROBLEMU FORMATOWANIA)
-# =========================================================
 if choice == "📊 DASHBOARD":
     st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
-    st.subheader("STATUS SYSTEMÓW")
+    st.subheader("STATUS EKONOMICZNY")
     
-    # Statystyki
-    active_mask = data['status_bool'] == True
+    active_mask = data['STATUS_INTERNAL'] == True
     total_rev = data[active_mask]['kwota_subskrypcji'].sum()
     
     m1, m2, m3 = st.columns(3)
-    m1.metric("MIESIĘCZNY PRZYCHÓD", f"{total_rev:,.2f} PLN")
-    m2.metric("AKTYWNE INSTANCJE", len(data[active_mask]))
-    m3.metric("WSZYSCY KLIENCI", len(data))
+    m1.metric("PRZYCHÓD (M)", f"{total_rev:,.2f} PLN")
+    m2.metric("AKTYWNE SYSTEMY", len(data[active_mask]))
+    m3.metric("SUMA KLIENTÓW", len(data))
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.subheader("LISTA MONITOROWANIA")
-
-    # Przygotowanie danych do wyświetlenia (tylko kluczowe kolumny)
-    display_df = data[['firma_id', 'uzytkownik_id', 'status_bool', 'data_konca', 'kwota_subskrypcji']].copy()
+    # --- GENEROWANIE TABELI JAKO JEDEN CIĄG HTML (NAJBARDZIEJ STABILNE) ---
+    st.subheader("LISTA OPERACYJNA")
     
-    # Funkcja stylowania Pandas (zamiast HTML)
-    def highlight_expired(row):
+    html_code = '<table class="vorteza-table"><thead><tr>'
+    html_code += '<th>Firma</th><th>Użytkownik</th><th>Status</th><th>Wygasa</th><th>Kwota</th>'
+    html_code += '</tr></thead><tbody>'
+
+    today = datetime.now().date()
+
+    for _, row in data.iterrows():
+        is_active = row['STATUS_INTERNAL']
+        status_txt = "✅ AKTYWNY" if is_active else "❌ BLOKADA"
+        
+        # Sprawdzanie daty wygaśnięcia
+        style_class = ""
         try:
-            today = datetime.now().date()
-            expiry = pd.to_datetime(row['data_konca']).date()
-            if expiry < today and row['status_bool'] == True:
-                return ['background-color: #4B0000; color: white'] * len(row)
+            exp_date = pd.to_datetime(row['data_konca']).date()
+            if exp_date < today and is_active:
+                style_class = 'class="row-expired"'
         except:
             pass
-        return [''] * len(row)
 
-    # Renderowanie tabeli przez st.dataframe (odporne na błędy wyświetlania)
-    styled_table = display_df.style.apply(highlight_expired, axis=1)\
-        .format({'kwota_subskrypcji': "{:.2f} PLN"})\
-        .set_properties(**{'text-align': 'left'})
-
-    st.dataframe(
-        styled_table, 
-        use_container_width=True, 
-        height=500,
-        hide_index=True
-    )
-
-# =========================================================
-# 5. ZARZĄDZANIE (EDYCJA)
-# =========================================================
-elif choice == "🔧 ZARZĄDZANIE":
-    st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
-    st.subheader("EDYCJA PARAMETRÓW DOSTĘPU")
+        html_code += f'''
+        <tr {style_class}>
+            <td>{row['firma_id']}</td>
+            <td>{row['uzytkownik_id']}</td>
+            <td>{status_txt}</td>
+            <td>{row['data_konca']}</td>
+            <td>{row['kwota_subskrypcji']:.2f} PLN</td>
+        </tr>
+        '''
     
-    client = st.selectbox("Wybierz klienta:", data['display_name'].tolist())
-    idx = data[data['display_name'] == client].index[0]
+    html_code += '</tbody></table>'
+    
+    # WYŚWIETLENIE GOTOWEJ TABELI
+    st.markdown(html_code, unsafe_allow_html=True)
+
+elif choice == "🔧 KONFIGURACJA":
+    st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
+    selected = st.selectbox("Wybierz instancję:", data['display_name'].tolist())
+    idx = data[data['display_name'] == selected].index[0]
     row = data.loc[idx]
 
     with st.form("edit_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            new_pass = st.text_input("Klucz (Hasło)", value=str(row['haslo']))
-            new_status = st.checkbox("Dostęp Aktywny", value=bool(row['status_bool']))
-            new_app_id = st.text_input("App ID", value=str(row.get('aplikacja_id', '')))
-        with col2:
-            new_end = st.text_input("Wygasa (RRRR-MM-DD)", value=str(row['data_konca']))
-            new_price = st.number_input("Stawka", value=float(row['kwota_subskrypcji']))
-            new_url = st.text_input("URL Systemu", value=str(row.get('url_aplikacji', '')))
+        c1, c2 = st.columns(2)
+        with c1:
+            n_pass = st.text_input("Hasło", value=str(row['haslo']))
+            n_status = st.checkbox("Status Aktywny", value=bool(row['STATUS_INTERNAL']))
+        with c2:
+            n_end = st.text_input("Data Końca (RRRR-MM-DD)", value=str(row['data_konca']))
+            n_price = st.number_input("Kwota", value=float(row['kwota_subskrypcji']))
             
-        if st.form_submit_button("ZAPISZ ZMIANY W CHMURZE"):
-            # Przygotowanie kopii do zapisu (powrót do oryginalnych nazw)
-            df_save = data.copy().drop(columns=['display_name'])
+        if st.form_submit_button("ZAKTUALIZUJ"):
+            df_up = data.copy().drop(columns=['display_name', 'STATUS_INTERNAL'])
+            # Przywrócenie nazwy kolumny statusu dla GSheets
+            real_col = next((c for c in data.columns if 'status' in c.lower() or 'aktyw' in c.lower()), 'status_aktywny')
+            df_up[real_col] = data['STATUS_INTERNAL']
             
-            # Znajdujemy jak faktycznie nazywa się kolumna statusu w arkuszu
-            real_status_col = [c for c in df_save.columns if 'status' in c or 'aktyw' in c][0]
+            df_up.at[idx, 'haslo'] = n_pass
+            df_up.at[idx, real_col] = n_status
+            df_up.at[idx, 'data_konca'] = n_end
+            df_up.at[idx, 'kwota_subskrypcji'] = n_price
             
-            df_save.at[idx, 'haslo'] = new_pass
-            df_save.at[idx, real_status_col] = new_status
-            df_save.at[idx, 'data_konca'] = new_end
-            df_save.at[idx, 'kwota_subskrypcji'] = new_price
-            df_save.at[idx, 'url_aplikacji'] = new_url
-            df_save.at[idx, 'aplikacja_id'] = new_app_id
-            
-            # Usunięcie kolumny 'status_bool' jeśli została stworzona jako alias
-            if 'status_bool' in df_save.columns:
-                df_save.drop(columns=['status_bool'], inplace=True)
-
-            conn.update(data=df_save)
-            st.success("Baza danych została zaktualizowana.")
+            conn.update(data=df_up)
+            st.success("Dane zapisane.")
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-# =========================================================
-# 6. REJESTRACJA
-# =========================================================
 elif choice == "➕ NOWY KLIENT":
-    st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
-    st.subheader("REJESTRACJA NOWEJ INSTANCJI")
-    with st.form("new_client_form"):
-        f_id = st.text_input("ID FIRMY")
-        u_id = st.text_input("ID UŻYTKOWNIKA")
-        pwd = st.text_input("HASŁO")
-        end_d = st.date_input("TERMIN WAŻNOŚCI")
-        price = st.number_input("KWOTA SUBSKRYPCJI", value=250.0)
-
-        if st.form_submit_button("DODAJ KLIENTA"):
-            new_row = {
-                "firma_id": f_id, "uzytkownik_id": u_id, "haslo": pwd,
-                "data_konca": str(end_d), "kwota_subskrypcji": price,
-                "status_aktywny": True, "aplikacja_id": "VORTEZA_GEN",
-                "data_startu": datetime.now().strftime("%Y-%m-%d")
-            }
-            # Usuwamy kolumny pomocnicze przed dodaniem
-            clean_df = data.copy().drop(columns=['display_name', 'status_bool'], errors='ignore')
-            final_df = pd.concat([clean_df, pd.DataFrame([new_row])], ignore_index=True)
-            
-            conn.update(data=final_df)
-            st.success("Dodano pomyślnie.")
+    with st.form("new"):
+        f = st.text_input("FIRMA ID")
+        u = st.text_input("USER ID")
+        h = st.text_input("HASŁO")
+        d = st.date_input("DATA KOŃCA")
+        k = st.number_input("KWOTA", value=250.0)
+        if st.form_submit_button("DODAJ"):
+            new_r = {"firma_id":f, "uzytkownik_id":u, "haslo":h, "data_konca":str(d), "kwota_subskrypcji":k, "status_aktywny":True}
+            final = pd.concat([data.drop(columns=['display_name','STATUS_INTERNAL']), pd.DataFrame([new_r])], ignore_index=True)
+            conn.update(data=final)
+            st.success("Dodano.")
             st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
