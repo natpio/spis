@@ -4,16 +4,14 @@ import pandas as pd
 from datetime import datetime
 
 # =========================================================
-# 1. KONFIGURACJA STRONY I STYLIZACJA (STYL VORTEZA)
+# 1. KONFIGURACJA I STYLIZACJA (STYL VORTEZA)
 # =========================================================
 st.set_page_config(page_title="VORTEZA MASTER ADMIN", layout="wide")
 
-# Wstrzyknięcie CSS dla zachowania spójności z innymi aplikacjami
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: white; }
     .stMetric { background-color: #1a1c24; padding: 15px; border-radius: 10px; border: 1px solid #ff4b4b; }
-    div[data-testid="stExpander"] { border: 1px solid #333; background-color: #161a25; }
     .vorteza-header {
         color: #ff4b4b;
         text-align: center;
@@ -28,7 +26,7 @@ st.markdown("""
         background-color: #ff4b4b;
         color: white;
         border-radius: 5px;
-        border: none;
+        font-weight: bold;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -36,16 +34,22 @@ st.markdown("""
 st.markdown("<h1 class='vorteza-header'>VORTEZA - CENTRUM ZARZĄDZANIA</h1>", unsafe_allow_html=True)
 
 # =========================================================
-# 2. POŁĄCZENIE Z BAZĄ GOOGLE SHEETS
+# 2. POŁĄCZENIE I POBIERANIE DANYCH
 # =========================================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    # Pobieramy dane z arkusza (ttl=0 zapewnia brak opóźnień w odświeżaniu)
     df = conn.read(ttl=0)
-    # Tworzymy unikalną nazwę wyświetlaną, aby rozróżnić użytkowników o tych samych loginach
-    if not df.empty:
-        df['display_name'] = df['klient_id'].astype(str) + " | " + df['uzytkownik_id'].astype(str)
+    
+    # Sprawdzenie czy wymagane kolumny istnieją (zgodnie z Twoim zrzutem)
+    required = ['firma_id', 'uzytkownik_id', 'haslo', 'data_startu', 'data_konca', 'kwota_subskrypcji', 'status_aktywny']
+    for col in required:
+        if col not in df.columns:
+            st.error(f"BRAK KOLUMNY: {col}. Sprawdź nagłówki w Google Sheets!")
+            st.stop()
+            
+    # Tworzymy nazwę do wyboru w menu (Firma + User)
+    df['display_name'] = df['firma_id'].astype(str) + " | " + df['uzytkownik_id'].astype(str)
     return df
 
 data = load_data()
@@ -53,116 +57,122 @@ data = load_data()
 # =========================================================
 # 3. MENU BOCZNE
 # =========================================================
-st.sidebar.image("https://www.sqm.pl/wp-content/uploads/2021/03/logo-sqm-white.png", width=150) # Przykładowe logo
-menu = ["📊 Dashboard Finansowy", "🔧 Zarządzanie Kontami", "➕ Dodaj Nowego Klienta"]
+st.sidebar.title("VORTEZA ADMIN")
+menu = ["📊 Dashboard Finansowy", "🔧 Zarządzanie Kontami", "➕ Dodaj Nowy Wpis"]
 choice = st.sidebar.selectbox("NAWIGACJA", menu)
 
 # =========================================================
 # 4. DASHBOARD FINANSOWY
 # =========================================================
 if choice == "📊 Dashboard Finansowy":
-    st.subheader("STATUS SUBSKRYPCJI I PRZYCHODY")
+    st.subheader("BIEŻĄCY STATUS BIZNESU")
     
-    if data is not None and not data.empty:
-        # Statystyki na górze
-        col1, col2, col3 = st.columns(3)
-        total_active = data[data['status_aktywny'] == True].shape[0]
-        total_revenue = data[data['status_aktywny'] == True]['kwota_subskrypcji'].sum()
-        
-        col1.metric("AKTYWNE KONTA", total_active)
-        col2.metric("SUMA MIESIĘCZNA", f"{total_revenue:,.2f} PLN")
-        col3.metric("WSZYSTKIE WPISY", len(data))
+    today = datetime.now().date()
+    
+    # Przeliczanie danych
+    total_revenue = data[data['status_aktywny'] == True]['kwota_subskrypcji'].sum()
+    active_accounts = data[data['status_aktywny'] == True].shape[0]
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("MIESIĘCZNY PRZYCHÓD", f"{total_revenue:,.2f} PLN")
+    col2.metric("AKTYWNE SUBSKRYPCJE", active_accounts)
+    col3.metric("WSZYSTKIE KONTA", len(data))
 
-        st.markdown("---")
-        # Tabela z kolorowaniem aktywnych statusów
-        def color_status(val):
-            color = '#2ecc71' if val == True else '#e74c3c'
-            return f'color: {color}; font-weight: bold'
+    st.markdown("---")
+    
+    # Wyświetlanie tabeli z podświetleniem wygasających
+    st.write("### Lista wszystkich kont")
+    
+    def highlight_expired(row):
+        try:
+            end_date = pd.to_datetime(row['data_konca']).date()
+            if end_date < today and row['status_aktywny']:
+                return ['background-color: #4b0000'] * len(row) # Ciemna czerwień dla wygasłych
+        except:
+            pass
+        return [''] * len(row)
 
-        view_df = data[['klient_id', 'uzytkownik_id', 'status_aktywny', 'kwota_subskrypcji', 'data_konca']]
-        st.dataframe(view_df.style.applymap(color_status, subset=['status_aktywny']), use_container_width=True)
-    else:
-        st.warning("Baza danych jest pusta.")
+    st.dataframe(data.style.apply(highlight_expired, axis=1), use_container_width=True)
 
 # =========================================================
-# 5. ZARZĄDZANIE KONTAMI (EDYCJA I BLOKOWANIE)
+# 5. ZARZĄDZANIE KONTAMI
 # =========================================================
 elif choice == "🔧 Zarządzanie Kontami":
-    st.subheader("EDYCJA UPRAWNIEŃ I PŁATNOŚCI")
+    st.subheader("MODYFIKACJA KLIENTA")
     
-    if not data.empty:
-        selected_user = st.selectbox("Wybierz konto do modyfikacji", data['display_name'].tolist())
+    user_to_edit = st.selectbox("Wybierz konto do edycji", data['display_name'].tolist())
+    idx = data[data['display_name'] == user_to_edit].index[0]
+    row = data.loc[idx]
+
+    with st.form("edit_form"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown("**Dane Podstawowe**")
+            new_firma = st.text_input("Firma ID", value=row['firma_id'])
+            new_user = st.text_input("Użytkownik ID", value=row['uzytkownik_id'])
+            new_pass = st.text_input("Hasło", value=row['haslo'])
+            new_app = st.text_input("Aplikacja ID", value=row.get('aplikacja_id', ''))
         
-        # Pobranie indeksu i danych konkretnego wiersza
-        idx = data[data['display_name'] == selected_user].index[0]
-        row = data.loc[idx]
+        with c2:
+            st.markdown("**Terminy i Płatności**")
+            new_start = st.text_input("Data Startu (RRRR-MM-DD)", value=str(row['data_startu']))
+            new_end = st.text_input("Data Końca (RRRR-MM-DD)", value=str(row['data_konca']))
+            new_price = st.number_input("Kwota Subskrypcji", value=float(row['kwota_subskrypcji']))
+        
+        with c3:
+            st.markdown("**Dostęp**")
+            new_url = st.text_input("URL Aplikacji", value=row.get('url_aplikacji', ''))
+            new_status = st.checkbox("STATUS AKTYWNY", value=bool(row['status_aktywny']))
+            st.write("---")
+            save = st.form_submit_button("ZAPISZ ZMIANY")
 
-        with st.form("edit_user_form"):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.info(f"Firma: {row['klient_id']}")
-                st.info(f"Login: {row['uzytkownik_id']}")
-                new_pass = st.text_input("Hasło (widoczne dla admina)", value=str(row['haslo']))
-                new_status = st.checkbox("DOSTĘP AKTYWNY", value=bool(row['status_aktywny']))
+        if save:
+            df_save = data.copy().drop(columns=['display_name'])
+            df_save.at[idx, 'firma_id'] = new_firma
+            df_save.at[idx, 'uzytkownik_id'] = new_user
+            df_save.at[idx, 'haslo'] = new_pass
+            df_save.at[idx, 'aplikacja_id'] = new_app
+            df_save.at[idx, 'data_startu'] = new_start
+            df_save.at[idx, 'data_konca'] = new_end
+            df_save.at[idx, 'kwota_subskrypcji'] = new_price
+            df_save.at[idx, 'url_aplikacji'] = new_url
+            df_save.at[idx, 'status_aktywny'] = new_status
             
-            with col_b:
-                new_price = st.number_input("Kwota subskrypcji (PLN)", value=float(row['kwota_subskrypcji']))
-                new_date = st.text_input("Data wygaśnięcia (RRRR-MM-DD)", value=str(row['data_konca']))
-                st.write("---")
-                save = st.form_submit_button("ZAPISZ ZMIANY W BAZIE")
-
-            if save:
-                # Kopia danych do zapisu (usuwamy kolumnę pomocniczą)
-                df_to_save = data.copy().drop(columns=['display_name'])
-                df_to_save.at[idx, 'haslo'] = new_pass
-                df_to_save.at[idx, 'status_aktywny'] = new_status
-                df_to_save.at[idx, 'kwota_subskrypcji'] = new_price
-                df_to_save.at[idx, 'data_konca'] = new_date
-                
-                conn.update(data=df_to_save)
-                st.success(f"Zaktualizowano dane dla: {selected_user}")
-                st.rerun()
-    else:
-        st.error("Brak danych do edycji.")
+            conn.update(data=df_save)
+            st.success("Zaktualizowano pomyślnie!")
+            st.rerun()
 
 # =========================================================
-# 6. DODAWANIE NOWEGO KLIENTA
+# 6. DODAWANIE NOWEGO WPISU
 # =========================================================
-elif choice == "➕ Dodaj Nowego Klienta":
-    st.subheader("REJESTRACJA NOWEGO KONTA W SYSTEMIE")
+elif choice == "➕ Dodaj Nowy Wpis":
+    st.subheader("REJESTRACJA NOWEJ USŁUGI")
     
     with st.form("add_form"):
-        c1, c2 = st.columns(2)
-        with c1:
-            new_klient = st.selectbox("Wybierz Firmę", ["PEPEL", "PREMIUM", "INNA"])
-            if new_klient == "INNA":
-                new_klient = st.text_input("Wpisz nazwę nowej firmy")
-            new_user = st.text_input("Login użytkownika (np. admin, biuro)")
-            new_pass = st.text_input("Hasło startowe")
-        with c2:
-            new_price = st.number_input("Cena subskrypcji", min_value=0.0, value=250.0)
-            new_date = st.date_input("Data końca subskrypcji")
-            new_active = st.checkbox("Aktywuj natychmiast", value=True)
+        col_left, col_right = st.columns(2)
+        with col_left:
+            a1 = st.text_input("Firma ID (np. PEPEL)")
+            a2 = st.text_input("Użytkownik ID (np. admin)")
+            a3 = st.text_input("Hasło")
+            a4 = st.text_input("Aplikacja ID (np. vortezaflowpepel)")
+        with col_right:
+            a5 = st.text_input("URL Aplikacji")
+            a6 = st.date_input("Data Startu")
+            a7 = st.date_input("Data Końca")
+            a8 = st.number_input("Kwota Subskrypcji", value=250.0)
+            a9 = st.checkbox("Aktywuj od razu", value=True)
             
-        submit_new = st.form_submit_button("DODAJ DO BAZY")
-        
-        if submit_new:
-            if new_klient and new_user and new_pass:
+        if st.form_submit_button("DODAJ DO SYSTEMU"):
+            if a1 and a2 and a3:
                 new_row = {
-                    "klient_id": new_klient,
-                    "uzytkownik_id": new_user,
-                    "haslo": new_pass,
-                    "status_aktywny": new_active,
-                    "kwota_subskrypcji": new_price,
-                    "data_konca": new_date.strftime("%Y-%m-%d")
+                    "firma_id": a1, "uzytkownik_id": a2, "haslo": a3,
+                    "aplikacja_id": a4, "url_aplikacji": a5,
+                    "data_startu": str(a6), "data_konca": str(a7),
+                    "kwota_subskrypcji": a8, "status_aktywny": a9
                 }
-                
-                # Dodajemy nowy wiersz do istniejących danych
-                df_to_save = data.copy().drop(columns=['display_name'])
-                df_to_save = pd.concat([df_to_save, pd.DataFrame([new_row])], ignore_index=True)
-                
-                conn.update(data=df_to_save)
-                st.success(f"Dodano użytkownika {new_user} do firmy {new_klient}!")
+                df_final = pd.concat([data.drop(columns=['display_name']), pd.DataFrame([new_row])], ignore_index=True)
+                conn.update(data=df_final)
+                st.success("Nowe konto zostało utworzone!")
                 st.rerun()
             else:
-                st.warning("Wypełnij wszystkie pola!")
+                st.warning("Pola Firma, Użytkownik i Hasło są wymagane!")
