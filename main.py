@@ -47,13 +47,11 @@ def apply_vorteza_theme():
                 font-family: 'Montserrat', sans-serif;
             }}
             
-            /* CZARNY SIDEBAR */
             [data-testid="stSidebar"] {{
                 background-color: var(--v-dark) !important;
                 border-right: 1px solid #222;
             }}
 
-            /* NAGŁÓWKI */
             h1, h2, h3, .stSubheader {{
                 color: var(--v-copper) !important;
                 font-weight: 700 !important;
@@ -61,7 +59,6 @@ def apply_vorteza_theme():
                 letter-spacing: 3px;
             }}
 
-            /* KARTA VORTEZA */
             .vorteza-card {{
                 background: var(--v-panel);
                 padding: 25px;
@@ -71,7 +68,6 @@ def apply_vorteza_theme():
                 margin-bottom: 25px;
             }}
 
-            /* METRYKI - ETYKIETY I WARTOŚCI */
             [data-testid="stMetricLabel"] {{
                 color: var(--v-copper) !important;
                 text-transform: uppercase;
@@ -84,7 +80,6 @@ def apply_vorteza_theme():
                 font-weight: 700 !important;
             }}
 
-            /* FORMULARZE - ETYKIETY PÓL (ZARZĄDZANIE) */
             .stForm label, .stMarkdown p, label {{
                 color: var(--v-copper) !important;
                 text-transform: uppercase;
@@ -92,7 +87,6 @@ def apply_vorteza_theme():
                 font-weight: 700;
             }}
 
-            /* PRZYCISKI */
             .stButton > button {{
                 background-color: transparent !important;
                 color: var(--v-copper) !important;
@@ -109,14 +103,12 @@ def apply_vorteza_theme():
                 box-shadow: 0 0 20px rgba(181, 136, 99, 0.4);
             }}
             
-            /* INPUTY */
             div[data-baseweb="input"], input, select, textarea {{
                 background-color: rgba(0, 0, 0, 0.7) !important;
                 color: white !important;
                 border: 1px solid #333 !important;
             }}
             
-            /* SELECTBOX */
             div[data-baseweb="select"] > div {{
                 background-color: rgba(0, 0, 0, 0.7) !important;
                 color: white !important;
@@ -127,7 +119,45 @@ def apply_vorteza_theme():
 apply_vorteza_theme()
 
 # =========================================================
-# 2. KOMUNIKACJA Z BAZĄ GOOGLE SHEETS
+# 2. MECHANIZM LOGOWANIA (WYKORZYSTUJE st.secrets)
+# =========================================================
+def check_password():
+    """Zwraca True, jeśli poświadczenia zgadzają się z tymi w st.secrets."""
+
+    def login_form():
+        with st.container():
+            st.markdown('<div class="vorteza-card" style="max-width:400px; margin: 100px auto;">', unsafe_allow_html=True)
+            st.subheader("AUTORYZACJA VORTEZA")
+            user = st.text_input("Użytkownik", key="login_user")
+            pw = st.text_input("Hasło", type="password", key="login_pw")
+            
+            if st.button("WEJDŹ DO SYSTEMU"):
+                # Pobieranie danych z pliku secrets.toml / Streamlit Cloud
+                try:
+                    correct_user = st.secrets["auth"]["username"]
+                    correct_password = st.secrets["auth"]["password"]
+                    
+                    if user == correct_user and pw == correct_password:
+                        st.session_state["logged_in"] = True
+                        st.rerun()
+                    else:
+                        st.error("Błąd autoryzacji: Nieprawidłowe dane.")
+                except KeyError:
+                    st.error("BŁĄD KRYTYCZNY: Nie znaleziono kluczy 'auth' w konfiguracji secrets.")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    if "logged_in" not in st.session_state:
+        login_form()
+        return False
+    return True
+
+# Weryfikacja dostępu przed załadowaniem czegokolwiek innego
+if not check_password():
+    st.stop()
+
+# =========================================================
+# 3. KOMUNIKACJA Z BAZĄ GOOGLE SHEETS
 # =========================================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -148,7 +178,7 @@ except Exception as e:
     st.stop()
 
 # =========================================================
-# 3. RENDEROWANIE TABELI
+# 4. RENDEROWANIE TABELI
 # =========================================================
 def render_vorteza_table(df):
     today = datetime.now().date()
@@ -200,13 +230,15 @@ def render_vorteza_table(df):
     components.html(html_code, height=500, scrolling=True)
 
 # =========================================================
-# 4. MODUŁY
+# 5. MODUŁY I SIDEBAR
 # =========================================================
 logo = load_logo('logo_vorteza.png')
 if logo:
     st.sidebar.image(logo, use_column_width=True)
-else:
-    st.sidebar.header("VORTEZA")
+
+if st.sidebar.button("WYLOGUJ"):
+    del st.session_state["logged_in"]
+    st.rerun()
 
 menu = ["📊 DASHBOARD", "⚙️ ZARZĄDZANIE", "➕ NOWY KLIENT"]
 choice = st.sidebar.selectbox("NAWIGACJA", menu)
@@ -237,7 +269,6 @@ elif choice == "⚙️ ZARZĄDZANIE":
         with col1:
             u_pass = st.text_input("Hasło Dostępowe", value=str(row['haslo']))
             u_status = st.checkbox("Status Aktywny", value=bool(row['STATUS_CORE']))
-            u_app = st.text_input("Aplikacja ID", value=str(row.get('aplikacja_id', '')))
         with col2:
             def_date = row['data_konca'] if pd.notna(row['data_konca']) else datetime.now().date()
             u_date = st.date_input("Termin Ważności", value=def_date)
@@ -250,7 +281,6 @@ elif choice == "⚙️ ZARZĄDZANIE":
             df_up.at[idx, orig_col] = u_status
             df_up.at[idx, 'data_konca'] = str(u_date)
             df_up.at[idx, 'kwota_subskrypcji'] = u_price
-            df_up.at[idx, 'aplikacja_id'] = u_app
             conn.update(data=df_up)
             st.success("SYNCHRONIZACJA OK")
             st.rerun()
