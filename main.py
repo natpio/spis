@@ -62,20 +62,22 @@ def apply_vorteza_theme():
             .cost-table {{
                 width: 100%;
                 border-collapse: collapse;
-                background-color: var(--v-panel);
+                background-color: transparent;
+                margin-top: 10px;
             }}
             .cost-table th {{
                 text-align: left;
                 color: var(--v-copper);
-                border-bottom: 1px solid #444;
+                border-bottom: 2px solid var(--v-copper);
                 padding: 12px;
                 text-transform: uppercase;
-                font-size: 0.8rem;
+                font-size: 0.85rem;
             }}
             .cost-table td {{
                 padding: 12px;
-                border-bottom: 1px solid #222;
-                font-size: 0.9rem;
+                border-bottom: 1px solid #333;
+                font-size: 0.95rem;
+                color: #E0E0E0;
             }}
 
             .stButton > button {{
@@ -124,27 +126,32 @@ with col_title:
     st.markdown("<p style='letter-spacing:3px; color:#666;'>CENTRALNY SPIS SUBSKRYPCJI I DOSTĘPÓW</p>", unsafe_allow_html=True)
 
 # =========================================================
-# 3. POŁĄCZENIE I DANE (POPRAWKA BŁĘDU KEYERROR)
+# 3. POŁĄCZENIE I CZYSZCZENIE DANYCH
 # =========================================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     df = conn.read(ttl=0)
-    # 1. Usuwamy spacje z nazw kolumn
-    df.columns = [c.strip() for c in df.columns]
+    # Usuwamy spacje i ukryte znaki z nagłówków kolumn
+    df.columns = [str(c).strip().replace('\n', '') for c in df.columns]
     
-    # 2. Inteligentne mapowanie kolumny statusu
-    if 'status_aktywn_y' not in df.columns and 'status_aktywny' in df.columns:
-        df.rename(columns={'status_aktywny': 'status_aktywn_y'}, inplace=True)
-    
-    # Dodanie pomocniczego ID do selectboxów
+    # Mapowanie kolumny statusu (na wypadek różnych nazw w arkuszu)
+    possible_status_names = ['status_aktywny', 'status_aktywn_y', 'aktywny']
+    for name in possible_status_names:
+        if name in df.columns:
+            df.rename(columns={name: 'status_main'}, inplace=True)
+            break
+            
+    if 'status_main' not in df.columns:
+        df['status_main'] = True # Domyślnie True jeśli nie ma kolumny
+        
     df['display_name'] = df['firma_id'].astype(str) + " | " + df['uzytkownik_id'].astype(str)
     return df
 
 try:
     data = load_data()
 except Exception as e:
-    st.error(f"KRYTYCZNY BŁĄD BAZY: {e}")
+    st.error(f"BŁĄD DANYCH: {e}")
     st.stop()
 
 # =========================================================
@@ -155,23 +162,17 @@ menu = ["📊 DASHBOARD", "🔧 KONFIGURACJA KLIENTA", "➕ NOWA REJESTRACJA"]
 choice = st.sidebar.selectbox("NAWIGACJA", menu)
 
 # =========================================================
-# 5. DASHBOARD
+# 5. DASHBOARD - TUTAJ BYŁ BŁĄD FORMATOWANIA
 # =========================================================
 if choice == "📊 DASHBOARD":
     st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
     st.subheader("STATUS EKONOMICZNY")
     
     today = datetime.now().date()
+    active_mask = data['status_main'] == True
+    total_rev = data[active_mask]['kwota_subskrypcji'].sum()
+    active_count = data[active_mask].shape[0]
     
-    # Bezpieczne sprawdzanie statusu
-    if 'status_aktywn_y' in data.columns:
-        active_mask = data['status_aktywn_y'] == True
-        total_rev = data[active_mask]['kwota_subskrypcji'].sum()
-        active_count = data[active_mask].shape[0]
-    else:
-        total_rev, active_count = 0, 0
-        st.warning("Nie znaleziono kolumny statusu w arkuszu!")
-
     m1, m2, m3 = st.columns(3)
     m1.metric("PRZYCHÓD (M)", f"{total_rev:,.2f} PLN")
     m2.metric("AKTYWNE SYSTEMY", active_count)
@@ -181,20 +182,25 @@ if choice == "📊 DASHBOARD":
     st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
     st.subheader("LISTA OPERACYJNA")
     
+    # BUDOWANIE TABELI HTML
     table_html = """
     <table class="cost-table">
-        <tr>
-            <th>Firma</th><th>Użytkownik</th><th>Status</th><th>Wygasa</th><th>Kwota</th>
-        </tr>
+        <thead>
+            <tr>
+                <th>Firma</th><th>Użytkownik</th><th>Status</th><th>Wygasa</th><th>Kwota</th>
+            </tr>
+        </thead>
+        <tbody>
     """
     for _, row in data.iterrows():
-        is_active = row.get('status_aktywn_y', False)
+        is_active = row['status_main']
         status_txt = "✅ AKTYWNY" if is_active else "❌ BLOKADA"
         row_style = ""
+        
         try:
             end_dt = pd.to_datetime(row['data_konca']).date()
             if end_dt < today and is_active:
-                row_style = 'style="color: #ff4b4b; font-weight:bold;"'
+                row_style = 'style="background-color: rgba(181, 136, 99, 0.15); color: #ffbaba;"'
         except: pass
         
         table_html += f"""
@@ -203,10 +209,12 @@ if choice == "📊 DASHBOARD":
             <td>{row['uzytkownik_id']}</td>
             <td>{status_txt}</td>
             <td>{row['data_konca']}</td>
-            <td>{row.get('kwota_subskrypcji', 0):.2f} PLN</td>
+            <td>{row['kwota_subskrypcji']:.2f} PLN</td>
         </tr>
         """
-    table_html += "</table>"
+    table_html += "</tbody></table>"
+    
+    # KLUCZOWE: Użycie unsafe_allow_html=True
     st.markdown(table_html, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -225,17 +233,21 @@ elif choice == "🔧 KONFIGURACJA KLIENTA":
         c1, c2 = st.columns(2)
         with c1:
             n_pass = st.text_input("Klucz Dostępu (Hasło)", value=str(row['haslo']))
-            n_status = st.checkbox("Dostęp Aktywny", value=bool(row.get('status_aktywn_y', True)))
-            n_app_id = st.text_input("Aplikacja ID", value=str(row['aplikacja_id']))
+            n_status = st.checkbox("Dostęp Aktywny", value=bool(row['status_main']))
+            n_app_id = st.text_input("Aplikacja ID", value=str(row.get('aplikacja_id', '')))
         with c2:
             n_end = st.text_input("Termin ważności (RRRR-MM-DD)", value=str(row['data_konca']))
-            n_price = st.number_input("Stawka Subskrypcji", value=float(row.get('kwota_subskrypcji', 0)))
+            n_price = st.number_input("Stawka Subskrypcji", value=float(row['kwota_subskrypcji']))
             n_url = st.text_input("URL Systemu", value=str(row.get('url_aplikacji', '')))
             
         if st.form_submit_button("ZAKTUALIZUJ RDZEŃ BAZY"):
             df_up = data.copy().drop(columns=['display_name'])
+            # Przywracamy oryginalną nazwę kolumny przed zapisem
+            orig_col = 'status_aktywn_y' if 'status_aktywn_y' in df_up.columns else 'status_aktywny'
+            df_up.rename(columns={'status_main': orig_col}, inplace=True)
+            
             df_up.at[idx, 'haslo'] = n_pass
-            df_up.at[idx, 'status_aktywn_y'] = n_status
+            df_up.at[idx, orig_col] = n_status
             df_up.at[idx, 'data_konca'] = n_end
             df_up.at[idx, 'kwota_subskrypcji'] = n_price
             df_up.at[idx, 'url_aplikacji'] = n_url
@@ -268,9 +280,9 @@ elif choice == "➕ NOWA REJESTRACJA":
             new_r = {
                 "firma_id": f, "uzytkownik_id": u, "haslo": h, "aplikacja_id": aid,
                 "data_startu": str(d_s), "data_konca": str(d_k),
-                "kwota_subskrypcji": kw, "status_aktywn_y": True, "url_aplikacji": ""
+                "kwota_subskrypcji": kw, "status_aktywny": True, "url_aplikacji": ""
             }
-            final_df = pd.concat([data.drop(columns=['display_name']), pd.DataFrame([new_r])], ignore_index=True)
+            final_df = pd.concat([data.drop(columns=['display_name', 'status_main']), pd.DataFrame([new_r])], ignore_index=True)
             conn.update(data=final_df)
             st.success("KLIENT DODANY POMYŚLNIE")
             st.rerun()
