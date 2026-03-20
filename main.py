@@ -2,195 +2,263 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
+import base64
+from PIL import Image
 
 # =========================================================
-# 1. KONFIGURACJA STRONY I STYLIZACJA VORTEZA
+# 1. KONFIGURACJA I STYLIZACJA VORTEZA SYSTEMS
 # =========================================================
-st.set_page_config(page_title="VORTEZA MASTER ADMIN", layout="wide")
+st.set_page_config(page_title="VORTEZA MASTER | SPIS", layout="wide")
 
-st.markdown("""
-    <style>
-    /* Ciemne tło i czerwone akcenty */
-    .main { background-color: #0e1117; color: white; }
-    .stMetric { background-color: #1a1c24; padding: 15px; border-radius: 10px; border: 1px solid #ff4b4b; }
+def get_base64_of_bin_file(bin_file):
+    try:
+        with open(bin_file, 'rb') as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+    except:
+        return ""
+
+def apply_vorteza_theme():
+    bin_str = get_base64_of_bin_file('bg_vorteza.png')
+    bg_css = f'background-image: url("data:image/png;base64,{bin_str}");' if bin_str else "background-color: #0E0E0E;"
     
-    /* Nagłówek w stylu pozostałych aplikacji */
-    .vorteza-header {
-        color: #ff4b4b;
-        text-align: center;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        border-bottom: 2px solid #ff4b4b;
-        padding-bottom: 10px;
-        margin-bottom: 25px;
-    }
-    
-    /* Przyciski */
-    .stButton>button {
-        width: 100%;
-        background-color: #ff4b4b;
-        color: white;
-        border-radius: 5px;
-        font-weight: bold;
-        border: none;
-    }
-    
-    /* Poprawa czytelności tabeli */
-    [data-testid="stTable"] {
-        background-color: #161a25;
-        border-radius: 10px;
-        overflow: hidden;
-    }
-    </style>
+    st.markdown(f"""
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;700&display=swap');
+
+            :root {{
+                --v-copper: #B58863;
+                --v-dark: #0E0E0E;
+                --v-panel: rgba(20, 20, 20, 0.95);
+                --v-text: #E0E0E0;
+            }}
+
+            .stApp {{
+                {bg_css}
+                background-size: cover;
+                background-attachment: fixed;
+                color: var(--v-text);
+                font-family: 'Montserrat', sans-serif;
+            }}
+
+            h1, h2, h3, .stSubheader {{
+                color: var(--v-copper) !important;
+                font-weight: 700 !important;
+                text-transform: uppercase;
+                letter-spacing: 2px;
+                text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            }}
+
+            /* Karty VORTEZA */
+            .vorteza-card {{
+                background-color: var(--v-panel);
+                padding: 25px;
+                border-radius: 5px;
+                border-left: 5px solid var(--v-copper);
+                box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+                backdrop-filter: blur(15px);
+                margin-bottom: 25px;
+            }}
+
+            /* Stylizacja tabeli */
+            .cost-table {{
+                width: 100%;
+                border-collapse: collapse;
+                background-color: var(--v-panel);
+            }}
+            .cost-table th {{
+                text-align: left;
+                color: var(--v-copper);
+                border-bottom: 1px solid #444;
+                padding: 12px;
+                text-transform: uppercase;
+                font-size: 0.8rem;
+            }}
+            .cost-table td {{
+                padding: 12px;
+                border-bottom: 1px solid #222;
+                font-size: 0.9rem;
+            }}
+
+            /* Przyciski */
+            .stButton > button {{
+                background-color: rgba(0, 0, 0, 0.7);
+                color: var(--v-copper);
+                border: 1px solid var(--v-copper);
+                padding: 10px;
+                width: 100%;
+                font-weight: 700;
+                text-transform: uppercase;
+                transition: 0.3s;
+            }}
+            .stButton > button:hover {{
+                background-color: var(--v-copper);
+                color: black;
+            }}
+
+            /* Inputy */
+            div[data-baseweb="select"] > div, input {{
+                background-color: rgba(15, 15, 15, 0.9) !important;
+                color: white !important;
+                border: 1px solid #444 !important;
+            }}
+
+            [data-testid="stMetricValue"] {{
+                color: var(--v-copper) !important;
+                font-weight: 700 !important;
+            }}
+        </style>
     """, unsafe_allow_html=True)
 
-st.markdown("<h1 class='vorteza-header'>VORTEZA - CENTRUM ZARZĄDZANIA</h1>", unsafe_allow_html=True)
+apply_vorteza_theme()
 
 # =========================================================
-# 2. POŁĄCZENIE Z BAZĄ (GOOGLE SHEETS)
+# 2. NAGŁÓWEK I LOGO
+# =========================================================
+col_logo, col_title = st.columns([1, 5])
+with col_logo:
+    try:
+        logo = Image.open('logo_vorteza.png')
+        st.image(logo, use_container_width=True)
+    except:
+        st.markdown("<h2 style='color:#B58863;'>VORTEZA</h2>", unsafe_allow_html=True)
+
+with col_title:
+    st.markdown("<h1 style='margin-bottom:0;'>VORTEZA MASTER</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='letter-spacing:3px; color:#666;'>CENTRALNY SPIS SUBSKRYPCJI I DOSTĘPÓW</p>", unsafe_allow_html=True)
+
+# =========================================================
+# 3. POŁĄCZENIE I DANE
 # =========================================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    # ttl=0 zapewnia pobieranie danych na żywo bez buforowania
     df = conn.read(ttl=0)
-    
-    # Czyszczenie nazw kolumn (usuwanie spacji)
     df.columns = [c.strip() for c in df.columns]
-    
-    # Tworzenie identyfikatora do list wyboru
     df['display_name'] = df['firma_id'].astype(str) + " | " + df['uzytkownik_id'].astype(str)
     return df
 
-try:
-    data = load_data()
-except Exception as e:
-    st.error(f"Błąd połączenia z arkuszem: {e}")
-    st.stop()
+data = load_data()
 
 # =========================================================
-# 3. MENU BOCZNE
+# 4. NAWIGACJA
 # =========================================================
-st.sidebar.title("PANEL STEROWANIA")
-menu = ["📊 Dashboard i Finanse", "🔧 Zarządzanie Kontami", "➕ Dodaj Nowy Wpis"]
-choice = st.sidebar.selectbox("Wybierz sekcję:", menu)
+st.sidebar.markdown("<h3 style='text-align:center;'>MENU SYSTEMU</h3>", unsafe_allow_html=True)
+menu = ["📊 DASHBOARD", "🔧 KONFIGURACJA KLIENTA", "➕ NOWA REJESTRACJA"]
+choice = st.sidebar.selectbox("NAWIGACJA", menu)
 
 # =========================================================
-# 4. DASHBOARD I FINANSE (CZYSTY WIDOK)
+# 5. DASHBOARD (STYL VORTEZA)
 # =========================================================
-if choice == "📊 Dashboard i Finanse":
-    st.subheader("PODSUMOWANIE PORTFELA")
+if choice == "📊 DASHBOARD":
+    st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
+    st.subheader("STATUS EKONOMICZNY")
     
     today = datetime.now().date()
-    
-    # Obliczenia
-    active_mask = data['status_aktywny'] == True
+    active_mask = data['status_aktywn_y'] == True
     total_rev = data[active_mask]['kwota_subskrypcji'].sum()
     active_count = data[active_mask].shape[0]
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("PRZYCHÓD MIESIĘCZNY", f"{total_rev:,.2f} PLN")
-    col2.metric("AKTYWNE USŁUGI", active_count)
-    col3.metric("WSZYSTKIE KONTA", len(data))
+    m1, m2, m3 = st.columns(3)
+    m1.metric("PRZYCHÓD (M)", f"{total_rev:,.2f} PLN")
+    m2.metric("AKTYWNE SYSTEMY", active_count)
+    m3.metric("SUMA KLIENTÓW", len(data))
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.write("### 📋 Status Klientów")
-
-    # Przygotowanie tabeli do wyświetlenia (tylko kluczowe dane)
-    # Usuwamy techniczne kolumny, żeby nie robić tłoku
-    view_df = data[['firma_id', 'uzytkownik_id', 'status_aktywny', 'data_konca', 'kwota_subskrypcji']].copy()
-
-    def style_rows(df):
-        def apply_logic(row):
-            styles = [''] * len(row)
-            try:
-                # Konwersja daty do porównania
-                end_dt = pd.to_datetime(row['data_konca']).date()
-                if not row['status_aktywny']:
-                    return ['background-color: #3d0000; color: #ff9999'] * len(row) # ZABLOKOWANY
-                if end_dt < today:
-                    return ['background-color: #4d3d00; color: #ffeb99'] * len(row) # WYGASŁY
-            except:
-                pass
-            return styles
-        return df.style.apply(apply_logic, axis=1).format({'kwota_subskrypcji': '{:.2f} PLN'})
-
-    st.table(style_rows(view_df))
+    st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
+    st.subheader("LISTA OPERACYJNA")
     
-    st.info("💡 Legenda: Czerwony = Brak dostępu | Żółty = Subskrypcja wygasła | Czarny = OK")
+    # Budowanie tabeli HTML dla lepszej kontroli stylu (zgodnie z vortezaflow)
+    table_html = """
+    <table class="cost-table">
+        <tr>
+            <th>Firma</th><th>Użytkownik</th><th>Status</th><th>Wygasa</th><th>Kwota</th>
+        </tr>
+    """
+    for _, row in data.iterrows():
+        status_txt = "✅ AKTYWNY" if row['status_aktywn_y'] else "❌ BLOKADA"
+        row_style = ""
+        try:
+            end_dt = pd.to_datetime(row['data_konca']).date()
+            if end_dt < today and row['status_aktywn_y']:
+                row_style = 'style="color: #ff4b4b; font-weight:bold;"' # Podświetlenie wygasłych
+        except: pass
+        
+        table_html += f"""
+        <tr {row_style}>
+            <td>{row['firma_id']}</td>
+            <td>{row['uzytkownik_id']}</td>
+            <td>{status_txt}</td>
+            <td>{row['data_konca']}</td>
+            <td>{row['kwota_subskrypcji']:.2f} PLN</td>
+        </tr>
+        """
+    table_html += "</table>"
+    st.markdown(table_html, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================================================
-# 5. ZARZĄDZANIE KONTAMI (EDYCJA)
+# 6. KONFIGURACJA (EDYCJA)
 # =========================================================
-elif choice == "🔧 Zarządzanie Kontami":
-    st.subheader("EDYCJA PARAMETRÓW KLIENTA")
+elif choice == "🔧 KONFIGURACJA KLIENTA":
+    st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
+    st.subheader("MODYFIKACJA DOSTĘPU")
     
-    selected = st.selectbox("Wybierz konto do modyfikacji:", data['display_name'].tolist())
+    selected = st.selectbox("Wybierz instancję do edycji:", data['display_name'].tolist())
     idx = data[data['display_name'] == selected].index[0]
     row = data.loc[idx]
 
-    with st.form("edit_form"):
-        st.markdown(f"Edytujesz: **{selected}**")
+    with st.form("edit_vorteza"):
         c1, c2 = st.columns(2)
-        
         with c1:
-            n_pass = st.text_input("Hasło", value=str(row['haslo']))
-            n_status = st.checkbox("Status Aktywny", value=bool(row['status_aktywny']))
-            n_url = st.text_input("URL Aplikacji", value=str(row.get('url_aplikacji', '')))
-            n_app_id = st.text_input("Aplikacja ID", value=str(row.get('aplikacja_id', '')))
-            
+            n_pass = st.text_input("Klucz Dostępu (Hasło)", value=str(row['haslo']))
+            n_status = st.checkbox("Dostęp Aktywny", value=bool(row['status_aktywn_y']))
+            n_app_id = st.text_input("Aplikacja ID", value=str(row['aplikacja_id']))
         with c2:
-            n_start = st.text_input("Data Startu (RRRR-MM-DD)", value=str(row['data_startu']))
-            n_end = st.text_input("Data Końca (RRRR-MM-DD)", value=str(row['data_konca']))
-            n_price = st.number_input("Cena (PLN)", value=float(row['kwota_subskrypcji']))
-
-        if st.form_submit_button("ZAPISZ ZMIANY W GOOGLE SHEETS"):
-            df_update = data.copy().drop(columns=['display_name'])
-            # Aktualizacja wartości
-            df_update.at[idx, 'haslo'] = n_pass
-            df_update.at[idx, 'status_aktywny'] = n_status
-            df_update.at[idx, 'url_aplikacji'] = n_url
-            df_update.at[idx, 'aplikacja_id'] = n_app_id
-            df_update.at[idx, 'data_startu'] = n_start
-            df_update.at[idx, 'data_konca'] = n_end
-            df_update.at[idx, 'kwota_subskrypcji'] = n_price
+            n_end = st.text_input("Termin ważności (RRRR-MM-DD)", value=str(row['data_konca']))
+            n_price = st.number_input("Stawka Subskrypcji", value=float(row['kwota_subskrypcji']))
+            n_url = st.text_input("URL Systemu", value=str(row['url_aplikacji']))
             
-            conn.update(data=df_update)
-            st.success("Baza została zaktualizowana!")
+        if st.form_submit_button("ZAKTUALIZUJ RDZEŃ BAZY"):
+            df_up = data.copy().drop(columns=['display_name'])
+            df_up.at[idx, 'haslo'] = n_pass
+            df_up.at[idx, 'status_aktywn_y'] = n_status
+            df_up.at[idx, 'data_konca'] = n_end
+            df_up.at[idx, 'kwota_subskrypcji'] = n_price
+            df_up.at[idx, 'url_aplikacji'] = n_url
+            df_up.at[idx, 'aplikacja_id'] = n_app_id
+            
+            conn.update(data=df_up)
+            st.success("ZMIANY ZAPISANE W SYSTEMIE")
             st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================================================
-# 6. DODAWANIE NOWEGO WPISU
+# 7. REJESTRACJA (NOWY)
 # =========================================================
-elif choice == "➕ Dodaj Nowy Wpis":
-    st.subheader("REJESTRACJA NOWEJ FIRMY / KONTA")
-    
-    with st.form("add_form"):
-        col_a, col_b = st.columns(2)
-        with col_a:
-            f_id = st.text_input("Firma ID (np. PEPEL)")
-            u_id = st.text_input("Użytkownik ID (np. admin)")
-            h_id = st.text_input("Hasło dostępu")
-            a_id = st.text_input("Aplikacja ID (np. vortezaflowpepel)")
-            
-        with col_b:
-            url_id = st.text_input("URL Aplikacji")
-            d_s = st.date_input("Data Startu")
-            d_e = st.date_input("Data Końca")
-            price = st.number_input("Cena miesięczna", value=250.0)
-            
-        if st.form_submit_button("DODAJ KLIENTA"):
-            if f_id and u_id and h_id:
-                new_data = {
-                    "firma_id": f_id, "uzytkownik_id": u_id, "haslo": h_id,
-                    "aplikacja_id": a_id, "url_aplikacji": url_id,
-                    "data_startu": str(d_s), "data_konca": str(d_e),
-                    "kwota_subskrypcji": price, "status_aktywny": True
-                }
-                
-                final_df = pd.concat([data.drop(columns=['display_name']), pd.DataFrame([new_data])], ignore_index=True)
-                conn.update(data=final_df)
-                st.success("Nowy klient został dodany do bazy!")
-                st.rerun()
-            else:
-                st.warning("Pola Firma, Użytkownik i Hasło są obowiązkowe!")
+elif choice == "➕ NOWA REJESTRACJA":
+    st.markdown('<div class="vorteza-card">', unsafe_allow_html=True)
+    st.subheader("DODAWANIE NOWEGO KLIENTA")
+    with st.form("new_client"):
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            f = st.text_input("FIRMA ID")
+            u = st.text_input("USER ID")
+            h = st.text_input("HASŁO")
+        with cc2:
+            aid = st.text_input("APLIKACJA ID")
+            d_s = st.date_input("DATA STARTU")
+            d_k = st.date_input("DATA KOŃCA")
+            kw = st.number_input("KWOTA", value=250.0)
+
+        if st.form_submit_button("UTWÓRZ NOWY PROFIL"):
+            new_r = {
+                "firma_id": f, "uzytkownik_id": u, "haslo": h, "aplikacja_id": aid,
+                "data_startu": str(d_s), "data_konca": str(d_k),
+                "kwota_subskrypcji": kw, "status_aktywn_y": True, "url_aplikacji": ""
+            }
+            final_df = pd.concat([data.drop(columns=['display_name']), pd.DataFrame([new_r])], ignore_index=True)
+            conn.update(data=final_df)
+            st.success("KLIENT DODANY POMYŚLNIE")
+            st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
